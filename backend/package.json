@@ -4,7 +4,7 @@
   "description": "Backend API for Collinsville News App",
   "main": "dist/server.js",
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "ts-node src/server.ts",
     "dev": "ts-node src/server.ts",
     "build": "tsc",
     "watch": "tsc --watch"
