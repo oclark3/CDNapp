@@ -40,7 +40,8 @@
       },
       "eas": {
         "projectId": "d391b038-4f97-45af-b29a-8a9c4bc66391"
-      }
+      },
+      "apiBaseUrl": "https://cdnapp-4fya.onrender.com"
     }
   }
 }
