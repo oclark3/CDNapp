@@ -1,4 +1,6 @@
 import { useContext, createContext, type PropsWithChildren, useCallback, useEffect } from 'react';
+import Purchases from 'react-native-purchases';
+import { Platform } from 'react-native';
 import { useStorageState } from './useStorageState';
 import { authService } from '@/services/authService';
 import { registerUnauthorizedHandler } from '@/services/authInterceptor';
@@ -76,6 +78,18 @@ export function SessionProvider({ children }: PropsWithChildren) {
 
       setAccessToken(response.accessToken);
       setUser(response.user ? JSON.stringify(response.user) : null);
+
+      // Identify user in RevenueCat so entitlements are associated with this app user
+      try {
+        if (Platform.OS !== 'web' && response?.user) {
+          const appUserId = response.user.id ?? response.user.email;
+          if (appUserId) {
+            await Purchases.logIn(String(appUserId));
+          }
+        }
+      } catch (err) {
+        console.error('RevenueCat logIn failed during signIn:', err);
+      }
     } catch (error) {
       setAccessToken(null);
       setUser(null);
@@ -97,6 +111,19 @@ export function SessionProvider({ children }: PropsWithChildren) {
 
       setAccessToken(response.accessToken);
       setUser(response.user ? JSON.stringify(response.user) : null);
+
+      // Identify user in RevenueCat immediately after signup so paywall calls
+      // that follow will be associated with the correct app user.
+      try {
+        if (Platform.OS !== 'web' && response?.user) {
+          const appUserId = response.user.id ?? response.user.email;
+          if (appUserId) {
+            await Purchases.logIn(String(appUserId));
+          }
+        }
+      } catch (err) {
+        console.error('RevenueCat logIn failed during signUp:', err);
+      }
     } catch (error) {
       setAccessToken(null);
       setUser(null);
@@ -115,6 +142,14 @@ export function SessionProvider({ children }: PropsWithChildren) {
     setAccessToken(null);
     setUser(null);
 
+    // Log out from RevenueCat as well (non-blocking)
+    try {
+      if (Platform.OS !== 'web') {
+        await Purchases.logOut();
+      }
+    } catch (err) {
+      console.error('RevenueCat logOut failed during signOut:', err);
+    }
     // Revoke server session in background. Do not block logout UX on network latency.
     authService.logout(tokenToRevoke).catch((error) => {
       console.error('Sign out failed:', error);
