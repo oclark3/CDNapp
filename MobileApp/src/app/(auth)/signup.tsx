@@ -1,24 +1,10 @@
-import React, { useState } from "react";
-import { Text, View, ScrollView, Image, Alert, Platform } from "react-native";
+import React, { useRef, useState } from "react";
+import { Text, ScrollView, Image, Alert, Modal } from "react-native";
 import { useSession } from "@/hooks/useSession";
 import { TextInput, Button } from "react-native-paper";
 import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { PAYWALL_RESULT } from "react-native-purchases-ui";
-import { presentPaywallIfNeeded } from "@/services/Paywall";
-import Constants from 'expo-constants';
-
-const appConfig = Constants.expoConfig?.extra as {
-  revenueCatAppleApiKey?: string;
-  revenueCatAndroidApiKey?: string;
-};
-
-const hasRevenueCatKey = Boolean(
-  appConfig?.revenueCatAppleApiKey ||
-  appConfig?.revenueCatAndroidApiKey ||
-  process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ||
-  process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
-);
+import RevenueCatUI from "react-native-purchases-ui";
 
 export default function SignUpScreen() {
   const { signUp } = useSession();
@@ -27,11 +13,15 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
   const [errors, setErrors] = useState<{ 
     email?: string; 
     password?: string; 
     confirmPassword?: string 
   }>({});
+  const pendingCredentialsRef = useRef<{ email: string; password: string } | null>(null);
+  const isFinalizingRef = useRef(false);
+  const paywallCompletedRef = useRef(false);
 
   /**
    * Validate email format
@@ -52,6 +42,10 @@ export default function SignUpScreen() {
    * Handle user registration
    */
   const handleSignUp = async () => {
+    if (showPaywall || loading) {
+      return;
+    }
+
     const newErrors: { 
       email?: string; 
       password?: string; 
@@ -83,35 +77,82 @@ export default function SignUpScreen() {
     }
 
     setErrors({});
+    pendingCredentialsRef.current = { email, password };
+    if (paywallCompletedRef.current) {
+      void finishAccountCreation();
+      return;
+    }
+
+    paywallCompletedRef.current = false;
+    setShowPaywall(true);
+  };
+
+  const finishAccountCreation = async () => {
+    if (isFinalizingRef.current) {
+      return;
+    }
+
+    const pendingCredentials = pendingCredentialsRef.current;
+    if (!pendingCredentials) {
+      Alert.alert('Sign Up Failed', 'Your account could not be completed. Please try again.');
+      return;
+    }
+
+    isFinalizingRef.current = true;
     setLoading(true);
 
     try {
-      await signUp(email, password);
-
-      if (Platform.OS !== 'web' && hasRevenueCatKey) {
-        const result = await presentPaywallIfNeeded();
-
-        if (
-          result !== PAYWALL_RESULT.PURCHASED &&
-          result !== PAYWALL_RESULT.RESTORED &&
-          result !== PAYWALL_RESULT.NOT_PRESENTED &&
-          result !== PAYWALL_RESULT.CANCELLED
-        ) {
-          console.error('Paywall was not presented successfully');
-        }
-      }
-
+      await signUp(pendingCredentials.email, pendingCredentials.password);
+      pendingCredentialsRef.current = null;
       router.replace('/');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create account. Please try again.';
       Alert.alert('Sign Up Failed', errorMessage);
     } finally {
+      isFinalizingRef.current = false;
       setLoading(false);
     }
   };
 
+  const handlePaywallDismiss = () => {
+    if (loading || paywallCompletedRef.current) {
+      return;
+    }
+
+    setShowPaywall(true);
+  };
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
+      <Modal
+        visible={showPaywall}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => {}}
+        allowSwipeDismissal={false}
+      >
+        <RevenueCatUI.Paywall
+          style={{ flex: 1 }}
+          options={{ displayCloseButton: false }}
+          onPurchaseCompleted={() => {
+            paywallCompletedRef.current = true;
+            setShowPaywall(false);
+            void finishAccountCreation();
+          }}
+          onRestoreCompleted={() => {
+            paywallCompletedRef.current = true;
+            setShowPaywall(false);
+            void finishAccountCreation();
+          }}
+          onPurchaseCancelled={() => {
+            handlePaywallDismiss();
+          }}
+          onDismiss={() => {
+            handlePaywallDismiss();
+          }}
+        />
+      </Modal>
+
       <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 20, paddingVertical: 20 }}>
         <Image
           source={require("@assets/logo.png")}
@@ -133,7 +174,7 @@ export default function SignUpScreen() {
           placeholder="example@example.com"
           keyboardType="email-address"
           autoCapitalize="none"
-          editable={!loading}
+          editable={!loading && !showPaywall}
           style={{ marginBottom: 5 }}
           error={!!errors.email}
         />
@@ -154,7 +195,7 @@ export default function SignUpScreen() {
           }}
           placeholder="At least 8 characters"
           secureTextEntry
-          editable={!loading}
+          editable={!loading && !showPaywall}
           style={{ marginBottom: 5 }}
           error={!!errors.password}
         />
@@ -175,7 +216,7 @@ export default function SignUpScreen() {
           }}
           placeholder="Re-enter password"
           secureTextEntry
-          editable={!loading}
+          editable={!loading && !showPaywall}
           style={{ marginBottom: 5 }}
           error={!!errors.confirmPassword}
         />
@@ -189,10 +230,10 @@ export default function SignUpScreen() {
           mode="contained"
           onPress={handleSignUp}
           loading={loading}
-          disabled={loading || !email || !password || !confirmPassword}
+          disabled={loading || showPaywall || !email || !password || !confirmPassword}
           style={{ paddingVertical: 8, marginTop: 10 }}
         >
-          {loading ? 'Creating Account...' : 'Sign Up'}
+          {loading ? 'Creating Account...' : showPaywall ? 'Complete Payment' : 'Sign Up'}
         </Button>
 
         <Text style={{ textAlign: 'center' }}>
