@@ -42,6 +42,7 @@
         "projectId": "d391b038-4f97-45af-b29a-8a9c4bc66391"
       },
       "apiBaseUrl": "https://cd-napp-632s.vercel.app/"
-    }
+    },
+    "owner": "oclark3"
   }
 }
