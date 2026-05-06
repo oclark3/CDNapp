@@ -32,20 +32,24 @@ export async function presentPaywallIfNeeded(): Promise<PAYWALL_RESULT> {
 }
 
 /**
- * Get current customer entitlements (check if user is Pro)
+ * Get current customer entitlements (check if user has any active entitlement)
  * Call this on app startup and after paywall dismissal
  */
 export async function checkProStatus(): Promise<boolean> {
   try {
     const customerInfo = await Purchases.getCustomerInfo();
+    const activeEntitlements = customerInfo?.entitlements?.active ?? {};
+    const hasAnyEntitlement = Object.keys(activeEntitlements).length > 0;
+    
     try {
       console.log('Paywall.checkProStatus: customerInfo:', JSON.stringify(customerInfo, null, 2));
-      console.log('Paywall.checkProStatus: entitlements.active keys:', Object.keys(customerInfo?.entitlements?.active ?? {}));
+      console.log('Paywall.checkProStatus: entitlements.active keys:', Object.keys(activeEntitlements));
+      console.log('Paywall.checkProStatus: hasAnyEntitlement:', hasAnyEntitlement);
     } catch (e) {
       // ignore stringify errors
     }
 
-    return typeof customerInfo.entitlements.active["pro"] !== "undefined";
+    return hasAnyEntitlement;
   } catch (error) {
     console.error("Error checking pro status:", error);
     return false;

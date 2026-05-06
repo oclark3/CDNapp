@@ -10,11 +10,8 @@ import { presentPaywallIfNeeded, checkProStatus } from "@/services/Paywall";
 import Purchases from "react-native-purchases";
 
 export default function LoginScreen() {
-  const { signIn } = useSession();
+  const { signIn, signOut } = useSession();
   const router = useRouter();
-  // Temporary toggle for forcing paywall presentation during debugging.
-  // Remove once verified.
-  const TEMP_FORCE_PRESENT_AFTER_LOGIN = true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -76,52 +73,32 @@ export default function LoginScreen() {
           const isPro = await checkProStatus();
 
           if (!isPro) {
+            // User does not have entitlement; present paywall
             const result = await presentPaywallIfNeeded();
 
-            if (
-              result !== PAYWALL_RESULT.PURCHASED &&
-              result !== PAYWALL_RESULT.RESTORED &&
-              result !== PAYWALL_RESULT.NOT_PRESENTED &&
-              result !== PAYWALL_RESULT.CANCELLED
+            // Handle paywall result
+            if (result === PAYWALL_RESULT.CANCELLED) {
+              // User dismissed paywall without purchasing; log them out and stay on login
+              console.log('User dismissed paywall; logging out');
+              await signOut();
+              return;
+            } else if (
+              result === PAYWALL_RESULT.PURCHASED ||
+              result === PAYWALL_RESULT.RESTORED
             ) {
-              console.error('Paywall was not presented successfully');
+              // User subscribed; proceed to home
+              console.log('User subscribed; proceeding to home');
+            } else {
+              console.log('Paywall result:', result);
             }
           }
+          // If isPro is true or user just subscribed, proceed to home
         } catch (err) {
           console.error('Error checking/presenting paywall after signIn:', err);
         }
       }
 
-      // TEMPORARY: Display debug info in Alert for RevenueCat entitlements
-      if (TEMP_FORCE_PRESENT_AFTER_LOGIN && Platform.OS !== 'web' && hasRevenueCatKey) {
-        try {
-          console.log('TEMP: forcing paywall presentation after signIn');
-          const forcedResult = await presentPaywallIfNeeded();
-          console.log('TEMP: presentPaywallIfNeeded() returned', forcedResult);
-
-          // Also show debug Alert with entitlement info
-          try {
-            const customerInfo = await Purchases.getCustomerInfo();
-            const isPro = await checkProStatus();
-            const entitlements = Object.keys(customerInfo?.entitlements?.active ?? {});
-            
-            const debugMsg = [
-              'DEBUG INFO (Temp)',
-              `isPro: ${isPro}`,
-              `Entitlements: ${entitlements.length > 0 ? entitlements.join(', ') : 'None'}`,
-            ].join('\n');
-            
-            Alert.alert('RevenueCat Debug', debugMsg);
-          } catch (debugErr) {
-            console.error('Error collecting debug info:', debugErr);
-            Alert.alert('RevenueCat Debug', `Error: ${debugErr}`);
-          }
-        } catch (err) {
-          console.error('TEMP: error forcing paywall presentation:', err);
-        }
-      }
-
-      // Navigation will still be handled by the session provider effect; ensure route if necessary
+      // Navigation will be handled by the session provider effect; navigate to home
       try {
         router.replace('/');
       } catch (e) {
