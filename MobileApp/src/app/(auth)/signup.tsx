@@ -5,7 +5,7 @@ import { TextInput, Button } from "react-native-paper";
 import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PAYWALL_RESULT } from "react-native-purchases-ui";
-import { presentPaywallIfNeeded } from "@/services/Paywall";
+import { checkProStatus, presentPaywallIfNeeded } from "@/services/Paywall";
 import Constants from 'expo-constants';
 
 const appConfig = Constants.expoConfig?.extra as {
@@ -86,20 +86,31 @@ export default function SignUpScreen() {
     setLoading(true);
 
     try {
-      await signUp(email, password);
-
       if (Platform.OS !== 'web' && hasRevenueCatKey) {
-        const result = await presentPaywallIfNeeded();
+        const isProBeforePaywall = await checkProStatus();
 
-        if (
-          result !== PAYWALL_RESULT.PURCHASED &&
-          result !== PAYWALL_RESULT.RESTORED &&
-          result !== PAYWALL_RESULT.NOT_PRESENTED &&
-          result !== PAYWALL_RESULT.CANCELLED
-        ) {
-          console.error('Paywall was not presented successfully');
+        if (!isProBeforePaywall) {
+          const result = await presentPaywallIfNeeded();
+
+          if (result === PAYWALL_RESULT.CANCELLED) {
+            console.log('User dismissed paywall before signup; staying on signup screen');
+            return;
+          }
+
+          if (result !== PAYWALL_RESULT.PURCHASED && result !== PAYWALL_RESULT.RESTORED) {
+            console.error('Paywall was not completed successfully before signup');
+            return;
+          }
         }
       }
+
+      const hasAccessAfterPaywall = Platform.OS === 'web' ? true : await checkProStatus();
+      if (!hasAccessAfterPaywall) {
+        Alert.alert('Subscription Required', 'Please subscribe to continue creating your account.');
+        return;
+      }
+
+      await signUp(email, password);
 
       router.replace('/');
     } catch (error) {
