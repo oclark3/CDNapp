@@ -84,7 +84,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
         if (Platform.OS !== 'web' && response?.user) {
           const appUserId = response.user.id ?? response.user.email;
           if (appUserId) {
-            await Purchases.logIn(String(appUserId));
+            const rcResult = await Purchases.logIn(String(appUserId));
+            try {
+              console.log('useSession.signIn: RevenueCat logIn result:', JSON.stringify(rcResult));
+            } catch (e) {
+              console.log('useSession.signIn: RevenueCat logIn succeeded');
+            }
           }
         }
       } catch (err) {
@@ -118,7 +123,12 @@ export function SessionProvider({ children }: PropsWithChildren) {
         if (Platform.OS !== 'web' && response?.user) {
           const appUserId = response.user.id ?? response.user.email;
           if (appUserId) {
-            await Purchases.logIn(String(appUserId));
+            const rcResult = await Purchases.logIn(String(appUserId));
+            try {
+              console.log('useSession.signUp: RevenueCat logIn result:', JSON.stringify(rcResult));
+            } catch (e) {
+              console.log('useSession.signUp: RevenueCat logIn succeeded');
+            }
           }
         }
       } catch (err) {

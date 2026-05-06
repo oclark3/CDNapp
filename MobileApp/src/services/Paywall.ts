@@ -38,6 +38,13 @@ export async function presentPaywallIfNeeded(): Promise<PAYWALL_RESULT> {
 export async function checkProStatus(): Promise<boolean> {
   try {
     const customerInfo = await Purchases.getCustomerInfo();
+    try {
+      console.log('Paywall.checkProStatus: customerInfo:', JSON.stringify(customerInfo, null, 2));
+      console.log('Paywall.checkProStatus: entitlements.active keys:', Object.keys(customerInfo?.entitlements?.active ?? {}));
+    } catch (e) {
+      // ignore stringify errors
+    }
+
     return typeof customerInfo.entitlements.active["pro"] !== "undefined";
   } catch (error) {
     console.error("Error checking pro status:", error);

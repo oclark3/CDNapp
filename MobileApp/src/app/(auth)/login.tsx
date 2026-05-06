@@ -1,12 +1,20 @@
 import React, { useState } from "react";
-import { Text, View, ScrollView, Image, Alert } from "react-native";
+import { Text, View, ScrollView, Image, Alert, Platform } from "react-native";
 import { useSession } from "@/hooks/useSession";
 import { TextInput, Button } from "react-native-paper";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Constants from 'expo-constants';
+import { PAYWALL_RESULT } from "react-native-purchases-ui";
+import { presentPaywallIfNeeded, checkProStatus } from "@/services/Paywall";
+import Purchases from "react-native-purchases";
 
 export default function LoginScreen() {
   const { signIn } = useSession();
+  const router = useRouter();
+  // Temporary toggle for forcing paywall presentation during debugging.
+  // Remove once verified.
+  const TEMP_FORCE_PRESENT_AFTER_LOGIN = true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -50,7 +58,75 @@ export default function LoginScreen() {
       setLoading(true);
       // Call the real authentication API
       await signIn(email, password);
-      // Navigation will be handled automatically by the context based on auth state
+
+      const appConfig = Constants.expoConfig?.extra as {
+        revenueCatAppleApiKey?: string;
+        revenueCatAndroidApiKey?: string;
+      };
+
+      const hasRevenueCatKey = Boolean(
+        appConfig?.revenueCatAppleApiKey ||
+        appConfig?.revenueCatAndroidApiKey ||
+        process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ||
+        process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
+      );
+
+      if (Platform.OS !== 'web' && hasRevenueCatKey) {
+        try {
+          const isPro = await checkProStatus();
+
+          if (!isPro) {
+            const result = await presentPaywallIfNeeded();
+
+            if (
+              result !== PAYWALL_RESULT.PURCHASED &&
+              result !== PAYWALL_RESULT.RESTORED &&
+              result !== PAYWALL_RESULT.NOT_PRESENTED &&
+              result !== PAYWALL_RESULT.CANCELLED
+            ) {
+              console.error('Paywall was not presented successfully');
+            }
+          }
+        } catch (err) {
+          console.error('Error checking/presenting paywall after signIn:', err);
+        }
+      }
+
+      // TEMPORARY: Display debug info in Alert for RevenueCat entitlements
+      if (TEMP_FORCE_PRESENT_AFTER_LOGIN && Platform.OS !== 'web' && hasRevenueCatKey) {
+        try {
+          console.log('TEMP: forcing paywall presentation after signIn');
+          const forcedResult = await presentPaywallIfNeeded();
+          console.log('TEMP: presentPaywallIfNeeded() returned', forcedResult);
+
+          // Also show debug Alert with entitlement info
+          try {
+            const customerInfo = await Purchases.getCustomerInfo();
+            const isPro = await checkProStatus();
+            const entitlements = Object.keys(customerInfo?.entitlements?.active ?? {});
+            
+            const debugMsg = [
+              'DEBUG INFO (Temp)',
+              `isPro: ${isPro}`,
+              `Entitlements: ${entitlements.length > 0 ? entitlements.join(', ') : 'None'}`,
+            ].join('\n');
+            
+            Alert.alert('RevenueCat Debug', debugMsg);
+          } catch (debugErr) {
+            console.error('Error collecting debug info:', debugErr);
+            Alert.alert('RevenueCat Debug', `Error: ${debugErr}`);
+          }
+        } catch (err) {
+          console.error('TEMP: error forcing paywall presentation:', err);
+        }
+      }
+
+      // Navigation will still be handled by the session provider effect; ensure route if necessary
+      try {
+        router.replace('/');
+      } catch (e) {
+        // ignore router errors
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Login failed. Please try again.';
       Alert.alert('Login Failed', errorMessage);
