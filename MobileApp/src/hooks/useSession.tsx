@@ -5,9 +5,11 @@ import { useStorageState } from './useStorageState';
 import { authService } from '@/services/authService';
 import { registerUnauthorizedHandler } from '@/services/authInterceptor';
 import { useSegments, useRouter } from 'expo-router';
-import { User } from '@/types/types';
+import { AuthResponse, User } from '@/types/types';
 
 const AuthContext = createContext<{
+  authenticate: (email: string, password: string) => Promise<AuthResponse>;
+  completeSession: (response: AuthResponse) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -15,6 +17,8 @@ const AuthContext = createContext<{
   accessToken: string | null;
   isLoading: boolean;
 }>({
+  authenticate: async () => { throw new Error('Not implemented'); },
+  completeSession: async () => {},
   signIn: async () => {},
   signUp: async () => {},
   signOut: async () => {},
@@ -47,6 +51,39 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const isLoading = isLoadingAccessToken || isLoadingUser;
   const user = userJson ? (JSON.parse(userJson) as User) : null;
 
+  const completeSession = useCallback(async (response: AuthResponse): Promise<void> => {
+    if (!response?.accessToken) {
+      throw new Error('Authentication token was not returned');
+    }
+
+    setAccessToken(response.accessToken);
+    setUser(response.user ? JSON.stringify(response.user) : null);
+
+    // Identify user in RevenueCat so entitlements are associated with this app user
+    try {
+      if (Platform.OS !== 'web' && response?.user) {
+        const appUserId = response.user.id ?? response.user.email;
+        if (appUserId) {
+          const rcResult = await Purchases.logIn(String(appUserId));
+          try {
+            console.log('useSession.completeSession: RevenueCat logIn result:', JSON.stringify(rcResult));
+          } catch (e) {
+            console.log('useSession.completeSession: RevenueCat logIn succeeded');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('RevenueCat logIn failed during completeSession:', err);
+    }
+  }, [setAccessToken, setUser]);
+
+  /**
+   * Authenticate with email and password without persisting the session yet.
+   */
+  const authenticate = useCallback(async (email: string, password: string): Promise<AuthResponse> => {
+    return await authService.login(email, password);
+  }, []);
+
   /**
    * Handle route protection based on auth state
    */
@@ -70,31 +107,8 @@ export function SessionProvider({ children }: PropsWithChildren) {
    */
   const signIn = async (email: string, password: string): Promise<void> => {
     try {
-      const response = await authService.login(email, password);
-
-      if (!response?.accessToken) {
-        throw new Error('Authentication token was not returned');
-      }
-
-      setAccessToken(response.accessToken);
-      setUser(response.user ? JSON.stringify(response.user) : null);
-
-      // Identify user in RevenueCat so entitlements are associated with this app user
-      try {
-        if (Platform.OS !== 'web' && response?.user) {
-          const appUserId = response.user.id ?? response.user.email;
-          if (appUserId) {
-            const rcResult = await Purchases.logIn(String(appUserId));
-            try {
-              console.log('useSession.signIn: RevenueCat logIn result:', JSON.stringify(rcResult));
-            } catch (e) {
-              console.log('useSession.signIn: RevenueCat logIn succeeded');
-            }
-          }
-        }
-      } catch (err) {
-        console.error('RevenueCat logIn failed during signIn:', err);
-      }
+      const response = await authenticate(email, password);
+      await completeSession(response);
     } catch (error) {
       setAccessToken(null);
       setUser(null);
@@ -175,6 +189,8 @@ export function SessionProvider({ children }: PropsWithChildren) {
   return (
     <AuthContext.Provider
       value={{
+        authenticate,
+        completeSession,
         signIn,
         signUp,
         signOut,

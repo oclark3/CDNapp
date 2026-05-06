@@ -10,7 +10,7 @@ import { presentPaywallIfNeeded, checkProStatus } from "@/services/Paywall";
 import Purchases from "react-native-purchases";
 
 export default function LoginScreen() {
-  const { signIn, signOut } = useSession();
+  const { authenticate, completeSession } = useSession();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,8 +53,8 @@ export default function LoginScreen() {
 
     try {
       setLoading(true);
-      // Call the real authentication API
-      await signIn(email, password);
+      // Authenticate first, but do not persist the app session yet.
+      const authResponse = await authenticate(email, password);
 
       const appConfig = Constants.expoConfig?.extra as {
         revenueCatAppleApiKey?: string;
@@ -70,6 +70,11 @@ export default function LoginScreen() {
 
       if (Platform.OS !== 'web' && hasRevenueCatKey) {
         try {
+          const appUserId = authResponse.user?.id ?? authResponse.user?.email;
+          if (appUserId) {
+            await Purchases.logIn(String(appUserId));
+          }
+
           const isPro = await checkProStatus();
 
           if (!isPro) {
@@ -78,9 +83,9 @@ export default function LoginScreen() {
 
             // Handle paywall result
             if (result === PAYWALL_RESULT.CANCELLED) {
-              // User dismissed paywall without purchasing; log them out and stay on login
-              console.log('User dismissed paywall; logging out');
-              await signOut();
+              // User dismissed paywall without purchasing; stay on login screen
+              console.log('User dismissed paywall; staying on login screen');
+              await Purchases.logOut();
               return;
             } else if (
               result === PAYWALL_RESULT.PURCHASED ||
@@ -90,13 +95,19 @@ export default function LoginScreen() {
               console.log('User subscribed; proceeding to home');
             } else {
               console.log('Paywall result:', result);
+              await Purchases.logOut();
+              return;
             }
           }
           // If isPro is true or user just subscribed, proceed to home
         } catch (err) {
           console.error('Error checking/presenting paywall after signIn:', err);
+          await Purchases.logOut();
+          return;
         }
       }
+
+      await completeSession(authResponse);
 
       // Navigation will be handled by the session provider effect; navigate to home
       try {
