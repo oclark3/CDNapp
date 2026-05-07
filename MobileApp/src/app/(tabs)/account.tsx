@@ -1,4 +1,4 @@
-import { Text, View, ScrollView, Alert, ActivityIndicator, Pressable, Modal, RefreshControl } from 'react-native';
+import { Text, View, ScrollView, Alert, ActivityIndicator, Pressable, Modal, RefreshControl, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '@/hooks/useSession';
 import { useRefreshOnTabPress } from '@/hooks/useRefreshOnTabPress';
@@ -8,6 +8,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'expo-router';
 import { useScrollToTop } from "@react-navigation/native";
 import LogoHeader from '@/components/LogoHeader';
+import RevenueCatUI from 'react-native-purchases-ui';
+import Purchases from 'react-native-purchases';
 
 interface UserProfile {
   id: string;
@@ -23,12 +25,31 @@ interface UserProfile {
   address?: string;
 }
 
+type CustomerInfo = Awaited<ReturnType<typeof Purchases.getCustomerInfo>>;
+type EntitlementInfo = CustomerInfo['entitlements']['active'][string];
+
+function formatDate(value?: string | null) {
+  if (!value) {
+    return 'N/A';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
 export default function AccountScreen() {
   const listRef = useRef(null);
   const { signOut, accessToken, isLoading: isSessionLoading } = useSession();
 
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [customerInfoLoading, setCustomerInfoLoading] = useState(false);
+  const [subscriptionActionLoading, setSubscriptionActionLoading] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -55,11 +76,32 @@ export default function AccountScreen() {
     }
   }, []);
 
+  const fetchCustomerInfo = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      setCustomerInfo(null);
+      return null;
+    }
+
+    try {
+      setCustomerInfoLoading(true);
+      const info = await Purchases.getCustomerInfo();
+      setCustomerInfo(info);
+      return info;
+    } catch (error) {
+      console.error('Error fetching RevenueCat customer info:', error);
+      setCustomerInfo(null);
+      return null;
+    } finally {
+      setCustomerInfoLoading(false);
+    }
+  }, []);
+
   const handleRefresh = useCallback(() => {
     if (accessToken) {
       fetchUserProfile(accessToken);
+      void fetchCustomerInfo();
     }
-  }, [accessToken, fetchUserProfile]);
+  }, [accessToken, fetchCustomerInfo, fetchUserProfile]);
 
   useRefreshOnTabPress(() => {
     handleRefresh();
@@ -78,6 +120,7 @@ export default function AccountScreen() {
 
     if (!accessToken) {
       setUserProfile(null);
+      setCustomerInfo(null);
       setLoading(false);
       return () => {
         isActive = false;
@@ -92,11 +135,71 @@ export default function AccountScreen() {
     };
 
     loadProfile();
+    void fetchCustomerInfo();
 
     return () => {
       isActive = false;
     };
-  }, [accessToken, isSessionLoading, fetchUserProfile]);
+  }, [accessToken, isSessionLoading, fetchCustomerInfo, fetchUserProfile]);
+
+  const activeEntitlements = Object.values(customerInfo?.entitlements?.active ?? {});
+
+  const handleManageSubscription = useCallback(async () => {
+    try {
+      setSubscriptionActionLoading(true);
+
+      if (Platform.OS === 'web') {
+        const webUrl = customerInfo?.managementURL;
+        if (webUrl) {
+          await Linking.openURL(webUrl);
+          return;
+        }
+
+        Alert.alert('Manage Subscription', 'No subscription management link is available for this account.');
+        return;
+      }
+
+      await RevenueCatUI.presentCustomerCenter();
+    } catch (error) {
+      console.error('Error opening RevenueCat customer center:', error);
+
+      const fallbackUrl = customerInfo?.managementURL;
+      if (fallbackUrl) {
+        try {
+          await Linking.openURL(fallbackUrl);
+          return;
+        } catch (linkError) {
+          console.error('Error opening fallback subscription URL:', linkError);
+        }
+      }
+
+      Alert.alert('Manage Subscription', 'Unable to open the subscription manager right now.');
+    } finally {
+      setSubscriptionActionLoading(false);
+    }
+  }, [customerInfo?.managementURL]);
+
+  const renderEntitlementRow = (label: string, value: string) => (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+      <Text style={{ fontSize: 13, color: '#666', flex: 1 }}>{label}</Text>
+      <Text style={{ fontSize: 13, color: '#000', fontWeight: '600', flex: 1, textAlign: 'right' }}>{value}</Text>
+    </View>
+  );
+
+  const renderEntitlementCard = (entitlement: EntitlementInfo) => (
+    <View key={entitlement.identifier} style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
+      <Text style={{ fontSize: 16, fontWeight: '700', color: '#000', marginBottom: 12 }}>{entitlement.identifier}</Text>
+      {renderEntitlementRow('Status', entitlement.isActive ? 'Active' : 'Inactive')}
+      {renderEntitlementRow('Will renew', entitlement.willRenew ? 'Yes' : 'No')}
+      {renderEntitlementRow('Expiration', formatDate(entitlement.expirationDate))}
+      {renderEntitlementRow('Latest purchase', formatDate(entitlement.latestPurchaseDate))}
+      {renderEntitlementRow('Product', entitlement.productIdentifier)}
+      {renderEntitlementRow('Store', entitlement.store)}
+      {renderEntitlementRow('Ownership', entitlement.ownershipType)}
+      {renderEntitlementRow('Billing issue', entitlement.billingIssueDetectedAt ? formatDate(entitlement.billingIssueDetectedAt) : 'None')}
+      {renderEntitlementRow('Unsubscribed at', entitlement.unsubscribeDetectedAt ? formatDate(entitlement.unsubscribeDetectedAt) : 'None')}
+    </View>
+  );
 
   const handlePasswordChange = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -170,7 +273,7 @@ export default function AccountScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }} edges={["top"]}>
-      <ScrollView ref={listRef} refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor="#5f249f" />}>
+      <ScrollView ref={listRef} refreshControl={<RefreshControl refreshing={loading || customerInfoLoading} onRefresh={handleRefresh} tintColor="#5f249f" />}>
         <LogoHeader />
         <View style={{ padding: 16, marginBottom: 20 }}>
           {/* Header */}
@@ -188,6 +291,58 @@ export default function AccountScreen() {
           <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
             <Text style={{ fontSize: 16, color: '#000' }}>{userProfile?.email}</Text>
           </View>
+        </View>
+
+        <Divider />
+
+        {/* Subscription Section */}
+        <View style={{ marginVertical: 25 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontSize: 14, color: '#666', fontWeight: '600' }}>SUBSCRIPTION & ENTITLEMENTS</Text>
+            <Button
+              mode="text"
+              onPress={handleManageSubscription}
+              loading={subscriptionActionLoading}
+              disabled={subscriptionActionLoading}
+              labelStyle={{ color: '#5f249f', fontSize: 12 }}
+            >
+              Manage
+            </Button>
+          </View>
+
+          {customerInfoLoading && !customerInfo ? (
+            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#5f249f" />
+              <Text style={{ marginTop: 10, color: '#666' }}>Loading subscription details...</Text>
+            </View>
+          ) : customerInfo ? (
+            <View>
+              <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#000', marginBottom: 12 }}>Summary</Text>
+                {renderEntitlementRow('Active entitlements', String(activeEntitlements.length))}
+                {renderEntitlementRow('Active subscriptions', customerInfo.activeSubscriptions.length > 0 ? customerInfo.activeSubscriptions.join(', ') : 'None')}
+                {renderEntitlementRow('Management URL', customerInfo.managementURL || 'Unavailable')}
+                {renderEntitlementRow('Original app user ID', customerInfo.originalAppUserId)}
+              </View>
+
+              {activeEntitlements.length > 0 ? (
+                activeEntitlements.map(renderEntitlementCard)
+              ) : (
+                <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
+                  <Text style={{ fontSize: 14, color: '#000', fontWeight: '600', marginBottom: 6 }}>No active entitlements</Text>
+                  <Text style={{ fontSize: 13, color: '#666' }}>
+                    This account does not currently have an active RevenueCat entitlement.
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
+              <Text style={{ fontSize: 14, color: '#666' }}>
+                Subscription details are unavailable right now.
+              </Text>
+            </View>
+          )}
         </View>
 
         <Divider />
