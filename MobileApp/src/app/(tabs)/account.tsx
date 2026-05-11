@@ -28,6 +28,12 @@ interface UserProfile {
 type CustomerInfo = Awaited<ReturnType<typeof Purchases.getCustomerInfo>>;
 type EntitlementInfo = CustomerInfo['entitlements']['active'][string];
 
+const ENTITLEMENT_DISPLAY_NAMES: { [key: string]: string } = {
+  "monthly": "Monthly",
+  "yearly": "Yearly",
+  "collinsville daily news access": "Collinsville Daily News Access",
+};
+
 function formatDate(value?: string | null) {
   if (!value) {
     return 'N/A';
@@ -53,6 +59,7 @@ export default function AccountScreen() {
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSubscriptionDeleteModal, setShowSubscriptionDeleteModal] = useState(false);
 
   // Password form state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -144,7 +151,17 @@ export default function AccountScreen() {
 
   const activeEntitlements = Object.values(customerInfo?.entitlements?.active ?? {});
 
-  const handleManageSubscription = useCallback(async () => {
+  const customerInfoHasActiveSubscription = useCallback((info: CustomerInfo | null) => {
+    const activeEntitlementsForInfo = Object.values(info?.entitlements?.active ?? {});
+    return activeEntitlementsForInfo.length > 0 || (info?.activeSubscriptions?.length ?? 0) > 0;
+  }, []);
+
+  const customerInfoHasActiveRenewingSubscription = useCallback((info: CustomerInfo | null) => {
+    const activeEntitlementsForInfo = Object.values(info?.entitlements?.active ?? {});
+    return activeEntitlementsForInfo.some((entitlement) => entitlement.willRenew);
+  }, []);
+
+  const openSubscriptionManagement = useCallback(async () => {
     try {
       setSubscriptionActionLoading(true);
 
@@ -182,22 +199,30 @@ export default function AccountScreen() {
   const renderEntitlementRow = (label: string, value: string) => (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
       <Text style={{ fontSize: 13, color: '#666', flex: 1 }}>{label}</Text>
-      <Text style={{ fontSize: 13, color: '#000', fontWeight: '600', flex: 1, textAlign: 'right' }}>{value}</Text>
+      <Text style={{ fontSize: 13, color: '#000', fontWeight: '600', flex: 1, textAlign: 'right' }}>{ENTITLEMENT_DISPLAY_NAMES[value] || value}</Text>
     </View>
   );
 
   const renderEntitlementCard = (entitlement: EntitlementInfo) => (
-    <View key={entitlement.identifier} style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
-      <Text style={{ fontSize: 16, fontWeight: '700', color: '#000', marginBottom: 12 }}>{entitlement.identifier}</Text>
-      {renderEntitlementRow('Status', entitlement.isActive ? 'Active' : 'Inactive')}
-      {renderEntitlementRow('Will renew', entitlement.willRenew ? 'Yes' : 'No')}
-      {renderEntitlementRow('Expiration', formatDate(entitlement.expirationDate))}
-      {renderEntitlementRow('Latest purchase', formatDate(entitlement.latestPurchaseDate))}
+    <View key={ENTITLEMENT_DISPLAY_NAMES[entitlement.identifier] || entitlement.identifier} style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
+      <Text style={{ fontSize: 16, fontWeight: '700', color: '#000', marginBottom: 12 }}>{ENTITLEMENT_DISPLAY_NAMES[entitlement.identifier] || entitlement.identifier}</Text>
       {renderEntitlementRow('Product', entitlement.productIdentifier)}
-      {renderEntitlementRow('Store', entitlement.store)}
-      {renderEntitlementRow('Ownership', entitlement.ownershipType)}
-      {renderEntitlementRow('Billing issue', entitlement.billingIssueDetectedAt ? formatDate(entitlement.billingIssueDetectedAt) : 'None')}
-      {renderEntitlementRow('Unsubscribed at', entitlement.unsubscribeDetectedAt ? formatDate(entitlement.unsubscribeDetectedAt) : 'None')}
+      {renderEntitlementRow(
+        'Status',
+        entitlement.isActive
+          ? entitlement.willRenew
+            ? 'Active'
+            : entitlement.expirationDate
+              ? `Canceled, active until ${formatDate(entitlement.expirationDate)}`
+              : 'Canceled, active until expiration'
+          : 'Inactive'
+      )}
+      {renderEntitlementRow('Expiration', formatDate(entitlement.expirationDate))}
+      {renderEntitlementRow('Will renew', entitlement.willRenew ? 'Yes' : 'No')}
+      {/* {renderEntitlementRow('Latest purchase', formatDate(entitlement.latestPurchaseDate))} */}
+      {/* {renderEntitlementRow('Store', entitlement.store)} */}
+      {/* {renderEntitlementRow('Ownership', entitlement.ownershipType)} */}
+      {renderEntitlementRow('Billing problem', entitlement.billingIssueDetectedAt ? formatDate(entitlement.billingIssueDetectedAt) : 'None')}
     </View>
   );
 
@@ -263,6 +288,18 @@ export default function AccountScreen() {
     }
   };
 
+  const handleDeleteButtonPress = async () => {
+    const latestCustomerInfo = await fetchCustomerInfo();
+    const subscriptionInfo = latestCustomerInfo ?? customerInfo;
+
+    if (customerInfoHasActiveRenewingSubscription(subscriptionInfo)) {
+      setShowSubscriptionDeleteModal(true);
+      return;
+    }
+
+    setShowDeleteModal(true);
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'white' }} edges={["top"]}>
@@ -279,116 +316,46 @@ export default function AccountScreen() {
           {/* Header */}
         <Text style={{ fontSize: 28, fontWeight: 'bold'}}>Account</Text>
 
-        <Text style={{ fontSize: 16, color: '#555', marginBottom: 30 }}>To change your info or sign up for newsletters, go to your account on the website: {"\n"}
+        <Text style={{ fontSize: 16, color: '#555', marginBottom: 30 }}>To manage your subscription go to the subscription section. To change other info or sign up for newsletters, go to your account on the website: {"\n"}
           <Link href="https://www.collinsvilledailynews.com/users/login/?referer_url=https%3A%2F%2Fwww.collinsvilledailynews.com%2F" asChild>
             <Text style={{ fontSize: 16, color: '#5f249f', marginBottom: 30 }}>https://www.collinsvilledailynews.com</Text>
           </Link>
         </Text>
-
-        {/* Email Section */}
-        <View style={{ marginBottom: 25 }}>
-          <Text style={{ fontSize: 14, color: '#999', marginBottom: 8, fontWeight: '600' }}>Email</Text>
-          <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
-            <Text style={{ fontSize: 16, color: '#000' }}>{userProfile?.email}</Text>
-          </View>
-        </View>
-
-        <Divider />
-
-        {/* Subscription Section */}
-        <View style={{ marginVertical: 25 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ fontSize: 14, color: '#666', fontWeight: '600' }}>SUBSCRIPTION & ENTITLEMENTS</Text>
-            <Button
-              mode="text"
-              onPress={handleManageSubscription}
-              loading={subscriptionActionLoading}
-              disabled={subscriptionActionLoading}
-              labelStyle={{ color: '#5f249f', fontSize: 12 }}
-            >
-              Manage
-            </Button>
-          </View>
-
-          {customerInfoLoading && !customerInfo ? (
-            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color="#5f249f" />
-              <Text style={{ marginTop: 10, color: '#666' }}>Loading subscription details...</Text>
-            </View>
-          ) : customerInfo ? (
-            <View>
-              <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#000', marginBottom: 12 }}>Summary</Text>
-                {renderEntitlementRow('Active entitlements', String(activeEntitlements.length))}
-                {renderEntitlementRow('Active subscriptions', customerInfo.activeSubscriptions.length > 0 ? customerInfo.activeSubscriptions.join(', ') : 'None')}
-                {renderEntitlementRow('Management URL', customerInfo.managementURL || 'Unavailable')}
-                {renderEntitlementRow('Original app user ID', customerInfo.originalAppUserId)}
-              </View>
-
-              {activeEntitlements.length > 0 ? (
-                activeEntitlements.map(renderEntitlementCard)
-              ) : (
-                <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
-                  <Text style={{ fontSize: 14, color: '#000', fontWeight: '600', marginBottom: 6 }}>No active entitlements</Text>
-                  <Text style={{ fontSize: 13, color: '#666' }}>
-                    This account does not currently have an active RevenueCat entitlement.
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : (
-            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
-              <Text style={{ fontSize: 14, color: '#666' }}>
-                Subscription details are unavailable right now.
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <Divider />
-
-        {/* Username Section */}
-        <View style={{ marginVertical: 25 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ fontSize: 14, color: '#999', fontWeight: '600' }}>Username</Text>
-          </View>
-
-          <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
-              <Text style={{ fontSize: 16, color: '#000' }}>@{userProfile?.screenname || userProfile?.screen_name || ''}</Text>
-            </View>
-        </View>
-
         <Divider />       
 
         {/* Profile Section */}
         <View style={{ marginVertical: 25 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ fontSize: 14, color: '#999', fontWeight: '600' }}>Profile</Text>
+            <Text style={{ fontSize: 14, color: '#999', marginBottom: 8, fontWeight: '600' }}>Profile</Text>
           </View>
 
           <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
               <Text style={{ fontSize: 14, color: '#000', marginBottom: 8 }}>
+                <Text style={{ fontWeight: '600' }}>Email: </Text>
+                {userProfile?.email}
+              </Text>
+              <Text style={{ fontSize: 14, color: '#000', marginBottom: 8 }}>
+                <Text style={{ fontWeight: '600' }}>Username: </Text>
+                {userProfile?.screenname || userProfile?.screen_name || ''}
+              </Text>
+              <Text style={{ fontSize: 14, color: '#000', marginBottom: 8 }}>
                 <Text style={{ fontWeight: '600' }}>Name: </Text>
                 {userProfile?.first_name} {userProfile?.last_name}
               </Text>
-            </View>
-        </View>
-
-        <Divider />
-
-
-
         {/* Password Section */}
-        <View style={{ marginVertical: 25 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <Text style={{ fontSize: 14, color: '#666', fontWeight: '600' }}>PASSWORD</Text>
-            <Button
-              mode="text"
-              onPress={() => setShowPasswordForm(!showPasswordForm)}
-              labelStyle={{ color: '#5f249f', fontSize: 12 }}
-            >
-              {showPasswordForm ? 'Cancel' : 'Change'}
-            </Button>
+        {/* <View style={{ marginVertical: 25 }}> */}
+          {/* <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}> */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+              <Text style={{ fontSize: 14, color: '#000', fontWeight: '600' }}>Password:</Text>
+              <Button
+                mode="text"
+                onPress={() => setShowPasswordForm(!showPasswordForm)}
+                labelStyle={{ color: '#5f249f', fontSize: 12 }}
+                style={{ marginLeft: 2, paddingHorizontal: 0, minWidth: 0 }}
+              >
+                {showPasswordForm ? 'Cancel' : 'Change'}
+              </Button>
+            </View>
           </View>
 
           {showPasswordForm && (
@@ -436,7 +403,74 @@ export default function AccountScreen() {
           )}
         </View>
 
+        <Divider />              
+              
+              
+            {/* </View> */}
+        {/* </View> */}
         <Divider />
+        {/* Subscription Section */}
+        <View style={{ marginVertical: 25 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontSize: 14, color: '#999', marginBottom: 8, fontWeight: '600' }}>Subscription</Text>
+            <Button
+              mode="text"
+              onPress={openSubscriptionManagement}
+              loading={subscriptionActionLoading}
+              disabled={subscriptionActionLoading}
+              labelStyle={{ color: '#5f249f', fontSize: 12 }}
+            >
+              Manage
+            </Button>
+          </View>
+
+          {customerInfoLoading && !customerInfo ? (
+            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color="#5f249f" />
+              <Text style={{ marginTop: 10, color: '#666' }}>Loading subscription details...</Text>
+            </View>
+          ) : customerInfo ? (
+            <View>
+              {activeEntitlements.length > 0 ? (
+                activeEntitlements.map(renderEntitlementCard)
+              ) : (
+                <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
+                  <Text style={{ fontSize: 14, color: '#000', fontWeight: '600', marginBottom: 6 }}>No active entitlements</Text>
+                  <Text style={{ fontSize: 13, color: '#666' }}>
+                    This account does not currently have an active RevenueCat entitlement.
+                  </Text>
+                </View>
+              )}
+              <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8, marginBottom: 12 }}>
+                {/* <Text style={{ fontSize: 14, fontWeight: '700', color: '#000', marginBottom: 12 }}>Summary</Text> */}
+                {/* {renderEntitlementRow('Active entitlements', String(activeEntitlements.length))} */}
+                {/* {renderEntitlementRow('Active subscription name', customerInfo.activeSubscriptions.length > 0 ? customerInfo.activeSubscriptions.join(', ') : 'None')} */}
+                {renderEntitlementRow('Management URL', customerInfo.managementURL || 'Unavailable')}
+                {/* {renderEntitlementRow('Original app user ID', customerInfo.originalAppUserId)} */}
+              </View>
+
+              
+            </View>
+          ) : (
+            <View style={{ backgroundColor: '#F5F5F5', padding: 15, borderRadius: 8 }}>
+              <Text style={{ fontSize: 14, color: '#666' }}>
+                Subscription details are unavailable right now.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <Divider />
+
+
+
+
+
+        <Divider />
+
+
+
+
 
         {/* Logout Button */}
         <View style={{ marginTop: 25, marginBottom: 10 }}>
@@ -453,7 +487,9 @@ export default function AccountScreen() {
         {/* Delete Account Button */}
         <View style={{ marginBottom: 40 }}>
           <Pressable
-            onPress={() => setShowDeleteModal(true)}
+            onPress={() => {
+              void handleDeleteButtonPress();
+            }}
             style={{ justifyContent: 'center' }}
           >
             <Button style={{ width: '70%', alignSelf: 'center' }}>
@@ -495,6 +531,31 @@ export default function AccountScreen() {
           </View>
         </Modal>
 
+        {/* Subscription cancellation prompt before account deletion */}
+        <Modal
+          animationType="fade"
+          transparent={true}
+          visible={showSubscriptionDeleteModal}
+          onRequestClose={() => setShowSubscriptionDeleteModal(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 20, width: '80%' }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#FC3C44' }}>Active Subscription</Text>
+              <Text style={{ fontSize: 14, color: '#666', marginBottom: 30 }}>
+                Deleting your account does NOT stop billing from Apple. To stop future charges, click on "Manage" in the subscription section of this page, then "Cancel Subscription" and follow the prompts. Then come back here to delete your account.
+              </Text>
+              <View style={{ flexDirection: 'column', justifyContent: 'flex-end', gap: 10 }}>
+                <Button
+                  mode="outlined"
+                  onPress={() => setShowSubscriptionDeleteModal(false)}
+                >
+                  OK
+                </Button>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {/* Delete Account Confirmation Modal */}
         <Modal
           animationType="fade"
@@ -506,7 +567,7 @@ export default function AccountScreen() {
             <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 20, width: '80%' }}>
               <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 15, color: '#FC3C44' }}>Delete Account</Text>
               <Text style={{ fontSize: 14, color: '#666', marginBottom: 30 }}>
-                This action cannot be undone. All your data will be permanently deleted. Are you sure?
+                This action cannot be undone. Are you sure you want to proceed?
               </Text>
               <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
                 <Button

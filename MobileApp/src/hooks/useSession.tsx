@@ -1,11 +1,13 @@
 import { useContext, createContext, type PropsWithChildren, useCallback, useEffect } from 'react';
 import Purchases from 'react-native-purchases';
-import { Platform } from 'react-native';
+import { Platform, AppState, type AppStateStatus } from 'react-native';
 import { useStorageState } from './useStorageState';
 import { authService } from '@/services/authService';
 import { registerUnauthorizedHandler } from '@/services/authInterceptor';
 import { useSegments, useRouter } from 'expo-router';
 import { AuthResponse, User } from '@/types/types';
+import { checkAndHandleExpiration } from '@/services/Paywall';
+import { Alert } from 'react-native';
 
 const AuthContext = createContext<{
   authenticate: (email: string, password: string) => Promise<AuthResponse>;
@@ -66,9 +68,18 @@ export function SessionProvider({ children }: PropsWithChildren) {
         if (appUserId) {
           const rcResult = await Purchases.logIn(String(appUserId));
           try {
-            console.log('useSession.completeSession: RevenueCat logIn result:', JSON.stringify(rcResult));
+            if (__DEV__) {
+              const safeRcResult = {
+                created: rcResult?.created ?? null,
+                customerInfo: {
+                  activeEntitlements: Object.keys(rcResult?.customerInfo?.entitlements?.active ?? {}).length,
+                  latestExpirationDate: rcResult?.customerInfo?.latestExpirationDate ?? null,
+                },
+              };
+              console.log('useSession.completeSession: RevenueCat logIn result (sanitized):', JSON.stringify(safeRcResult));
+            }
           } catch (e) {
-            console.log('useSession.completeSession: RevenueCat logIn succeeded');
+            if (__DEV__) console.log('useSession.completeSession: RevenueCat logIn succeeded');
           }
         }
       }
@@ -139,9 +150,18 @@ export function SessionProvider({ children }: PropsWithChildren) {
           if (appUserId) {
             const rcResult = await Purchases.logIn(String(appUserId));
             try {
-              console.log('useSession.signUp: RevenueCat logIn result:', JSON.stringify(rcResult));
+              if (__DEV__) {
+                const safeRcResult = {
+                  created: rcResult?.created ?? null,
+                  customerInfo: {
+                    activeEntitlements: Object.keys(rcResult?.customerInfo?.entitlements?.active ?? {}).length,
+                    latestExpirationDate: rcResult?.customerInfo?.latestExpirationDate ?? null,
+                  },
+                };
+                console.log('useSession.signUp: RevenueCat logIn result (sanitized):', JSON.stringify(safeRcResult));
+              }
             } catch (e) {
-              console.log('useSession.signUp: RevenueCat logIn succeeded');
+              if (__DEV__) console.log('useSession.signUp: RevenueCat logIn succeeded');
             }
           }
         }
@@ -180,11 +200,119 @@ export function SessionProvider({ children }: PropsWithChildren) {
     });
   }, [accessToken, setAccessToken, setUser]);
 
+  /**
+   * Handle subscription expiration by showing alert and logging out
+   */
+  const handleSubscriptionExpired = useCallback(async (): Promise<void> => {
+    if (__DEV__) console.log('handleSubscriptionExpired: Subscription expired, showing alert and logging out');
+    
+    Alert.alert(
+      'Subscription Expired',
+      'Your subscription has expired. You will be logged out.',
+      [
+        {
+          text: 'OK',
+          onPress: async () => {
+            // Log out after user dismisses alert
+            await signOut();
+          },
+        },
+      ],
+      { cancelable: false }
+    );
+  }, [signOut]);
+
   useEffect(() => {
     return registerUnauthorizedHandler(() => {
       void signOut();
     });
   }, [signOut]);
+
+  /**
+   * Set up RevenueCat listener for real-time subscription changes
+   */
+  useEffect(() => {
+    if (Platform.OS === 'web' || !accessToken) {
+      return;
+    }
+
+    if (__DEV__) console.log('useSession: Setting up RevenueCat customerInfoUpdateListener');
+
+    // addCustomerInfoUpdateListener does not return an unsubscribe function
+    // It sets up a listener that remains active for the lifetime of the app
+    Purchases.addCustomerInfoUpdateListener(async (customerInfo) => {
+      if (__DEV__) {
+        console.log('useSession: Received RevenueCat customerInfoUpdate');
+      }
+
+      // Check if subscription is expired
+      const isExpired = await checkAndHandleExpiration();
+      if (isExpired) {
+        if (__DEV__) console.log('useSession: Subscription expired via listener, triggering logout');
+        await handleSubscriptionExpired();
+      }
+    });
+
+    // Listener is set up and will remain active
+    // Note: RevenueCat SDK manages listener cleanup, no manual unsubscribe available
+  }, [accessToken, handleSubscriptionExpired]);
+
+  /**
+   * Set up AppState listener for app resume to check subscription expiration
+   */
+  useEffect(() => {
+    if (Platform.OS === 'web' || !accessToken) {
+      return;
+    }
+
+    if (__DEV__) console.log('useSession: Setting up AppState listener');
+
+    const subscription = AppState.addEventListener('change', async (state: AppStateStatus) => {
+      if (state === 'active') {
+        if (__DEV__) console.log('useSession: App resumed, checking subscription expiration');
+
+        try {
+          const isExpired = await checkAndHandleExpiration();
+          if (isExpired) {
+            if (__DEV__) console.log('useSession: Subscription expired on app resume, triggering logout');
+            await handleSubscriptionExpired();
+          }
+        } catch (error) {
+          console.error('useSession: Error checking subscription on app resume:', error);
+        }
+      }
+    });
+
+    return () => {
+      if (__DEV__) console.log('useSession: Removing AppState listener');
+      subscription.remove();
+    };
+  }, [accessToken, handleSubscriptionExpired]);
+
+  /**
+   * Check subscription expiration on initial session load
+   */
+  useEffect(() => {
+    if (Platform.OS === 'web' || !accessToken || isLoading) {
+      return;
+    }
+
+    if (__DEV__) console.log('useSession: Checking subscription on session load');
+
+    const checkExpiration = async () => {
+      try {
+        const isExpired = await checkAndHandleExpiration();
+        if (isExpired) {
+          if (__DEV__) console.log('useSession: Subscription expired on session load, triggering logout');
+          await handleSubscriptionExpired();
+        }
+      } catch (error) {
+        console.error('useSession: Error checking subscription on session load:', error);
+      }
+    };
+
+    void checkExpiration();
+  }, [accessToken, isLoading, handleSubscriptionExpired]);
 
   return (
     <AuthContext.Provider

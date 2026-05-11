@@ -1,5 +1,6 @@
 import RevenueCatUI, { PAYWALL_RESULT } from "react-native-purchases-ui";
 import Purchases from "react-native-purchases";
+import { isSubscriptionExpired } from "@/utils/subscriptionUtils";
 
 /**
  * Presents paywall only if user lacks the 'pro' entitlement
@@ -52,6 +53,33 @@ export async function checkProStatus(): Promise<boolean> {
     return hasAnyEntitlement;
   } catch (error) {
     console.error("Error checking pro status:", error);
+    return false;
+  }
+}
+
+/**
+ * Check if subscription has expired and return the expiration status
+ * This function queries the latest customer info and checks the expiration date
+ * 
+ * @returns true if subscription is expired, false if still active or no data
+ */
+export async function checkAndHandleExpiration(): Promise<boolean> {
+  try {
+    const customerInfo = await Purchases.getCustomerInfo();
+    const latestExpirationDate = customerInfo?.latestExpirationDate;
+    const isExpired = isSubscriptionExpired(latestExpirationDate);
+
+    if (__DEV__) {
+      console.log('Paywall.checkAndHandleExpiration:', {
+        latestExpirationDate,
+        isExpired,
+        now: new Date().toISOString(),
+      });
+    }
+
+    return isExpired;
+  } catch (error) {
+    console.error('Error checking subscription expiration:', error);
     return false;
   }
 }
