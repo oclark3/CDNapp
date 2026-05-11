@@ -154,7 +154,7 @@ export default function HomeScreen() {
                     decelerationRate="fast"
                     snapToInterval={undefined}
                     contentContainerStyle={styles.carouselContent}
-                    refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor="#5f249f" />}
+                    // refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor="#5f249f" />}
                 />
             </View>
         );
